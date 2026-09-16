@@ -27,8 +27,8 @@ nix-env --file nixpkgs/default.nix \
 ```
 
 Systems evaluated by default: `x86_64-linux`, `aarch64-linux`,
-`x86_64-darwin`, `aarch64-darwin`. Darwin evaluates fine on Linux — this is
-pure evaluation, nothing is built.
+`aarch64-darwin`. (`x86_64-darwin` was dropped by nixpkgs 26.11.) Darwin
+evaluates fine on Linux — this is pure evaluation, nothing is built.
 
 ## Running it
 

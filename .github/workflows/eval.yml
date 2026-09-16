@@ -20,9 +20,10 @@ on:
         description: "Committer date, ISO 8601 (e.g. 2026-08-13T03:55:42Z)"
         required: true
       systems:
+        # No x86_64-darwin: nixpkgs 26.11 dropped it and nix-env errors out.
         description: "JSON array of Nix systems to evaluate"
         required: false
-        default: '["x86_64-linux","aarch64-linux","x86_64-darwin","aarch64-darwin"]'
+        default: '["x86_64-linux","aarch64-linux","aarch64-darwin"]'
 
 # One commit at a time per (commit, system); unrelated commits may overlap.
 concurrency:
