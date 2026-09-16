@@ -1,0 +1,108 @@
+# Evaluates one nixpkgs commit for every system and archives the results to R2.
+#
+# This repo exists so the eval can run on GitHub's free 4-vCPU/16 GB runners,
+# which are only available to public repos. It contains no application code:
+# the workflow runs `nix-env` and uploads the gzipped JSON. Everything that
+# reads the archive (discovery, import, the search API) lives elsewhere.
+#
+# Dispatched with a commit + its committer date by the private indexer's daily
+# run. The archive key is {system}/{unix-seconds}-{hash}.json.gz, so a later
+# consumer can list a prefix and get commits in chronological order.
+name: eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Full nixpkgs commit hash (40 hex chars)"
+        required: true
+      committed_at:
+        description: "Committer date, ISO 8601 (e.g. 2026-08-13T03:55:42Z)"
+        required: true
+      systems:
+        description: "JSON array of Nix systems to evaluate"
+        required: false
+        default: '["x86_64-linux","aarch64-linux","x86_64-darwin","aarch64-darwin"]'
+
+# One commit at a time per (commit, system); unrelated commits may overlap.
+concurrency:
+  group: eval-${{ inputs.commit }}
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    # 'ubuntu-latest' on a public repo is 4 vCPU / 16 GB. On a private repo it
+    # is 2 vCPU / 7 GB, and the eval does not fit even with swap.
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        system: ${{ fromJSON(inputs.systems) }}
+    steps:
+      - name: Validate inputs
+        run: |
+          [[ "${{ inputs.commit }}" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be a full 40-hex sha"; exit 1; }
+          date -u -d "${{ inputs.committed_at }}" +%s > /dev/null || { echo "committed_at must be an ISO 8601 date"; exit 1; }
+
+      # The runner image changes under us: it ships an active /swapfile, and
+      # /mnt is not a separate disk. Pick the filesystem with the most free
+      # space, cap at 16 GB, and leave 8 GB for the checkout and output.
+      - name: Add swapfile
+        run: |
+          swapon --show; df -h / /mnt 2>/dev/null || true
+          target=$(df --output=target,avail -B1 / /mnt 2>/dev/null | tail -n +2 | sort -k2 -n | tail -1 | awk '{print $1}')
+          avail=$(df --output=avail -B1 "$target" | tail -1)
+          size=$(( avail - 8 * 1024 * 1024 * 1024 ))
+          cap=$(( 16 * 1024 * 1024 * 1024 ))
+          [ "$size" -gt "$cap" ] && size=$cap
+          if [ "$size" -lt $(( 2 * 1024 * 1024 * 1024 )) ]; then echo "not enough free space on $target for a useful swapfile"; exit 1; fi
+          echo "adding $(( size / 1024 / 1024 / 1024 )) GB swap on $target"
+          sudo fallocate -l "$size" "$target/eval-swapfile"
+          sudo chmod 600 "$target/eval-swapfile"
+          sudo mkswap "$target/eval-swapfile" > /dev/null
+          sudo swapon "$target/eval-swapfile"
+          free -h
+
+      - uses: DeterminateSystems/nix-installer-action@v16
+
+      - name: Fetch nixpkgs
+        run: |
+          curl -fsSL "https://codeload.github.com/NixOS/nixpkgs/tar.gz/${{ inputs.commit }}" -o nixpkgs.tar.gz
+          mkdir nixpkgs
+          tar -xzf nixpkgs.tar.gz --strip-components=1 -C nixpkgs
+          rm nixpkgs.tar.gz
+
+      - name: Evaluate
+        env:
+          # Nix's GC does badly with a small initial heap on a big eval.
+          GC_INITIAL_HEAP_SIZE: 6G
+        run: |
+          set -o pipefail
+          # The exact nix-env invocation the importer expects. packages-config.nix
+          # makes nix-env descend into attribute sets it would otherwise skip
+          # (e.g. nodePackages.*); the rest lets it see unfree/insecure packages.
+          config='{ allowInsecure = true; allowInsecurePredicate = (pkg: true); allowUnfree = true; allowUnfreePredicate = (pkg: true); }'
+          if [ -f nixpkgs/pkgs/top-level/packages-config.nix ]; then
+            config="(import ./nixpkgs/pkgs/top-level/packages-config.nix) // $config"
+          fi
+          /usr/bin/time -v nix-env \
+            --file ./nixpkgs/default.nix \
+            --query --available --meta --out-path --show-trace --json \
+            --arg config "$config" \
+            --argstr system "${{ matrix.system }}" \
+            2> time.log | gzip -9 > eval.json.gz \
+            || { tail -50 time.log; exit 1; }
+          grep -E "Maximum resident|Elapsed|Exit status" time.log
+          ls -l eval.json.gz
+
+      - name: Archive to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          key="${{ matrix.system }}/$(date -u -d "${{ inputs.committed_at }}" +%s)-${{ inputs.commit }}.json.gz"
+          aws --endpoint-url "${{ secrets.R2_ENDPOINT }}" s3 cp eval.json.gz "s3://${{ secrets.R2_BUCKET }}/$key"
+          echo "archived $key" | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -E "Maximum resident|Elapsed" time.log >> "$GITHUB_STEP_SUMMARY"
