@@ -107,3 +107,20 @@ jobs:
           aws --endpoint-url "${{ secrets.R2_ENDPOINT }}" s3 cp eval.json.gz "s3://${{ secrets.R2_BUCKET }}/$key"
           echo "archived $key" | tee -a "$GITHUB_STEP_SUMMARY"
           grep -E "Maximum resident|Elapsed" time.log >> "$GITHUB_STEP_SUMMARY"
+
+      # Peak RSS was 14.6 GB on the 15 GB runner (#2) and nixpkgs only grows.
+      # Once the eval no longer fits, the swapfile keeps it alive but wall time
+      # goes from minutes to tens of minutes, and nothing else would flag it.
+      # Fail when headroom drops under 500 MB so the drift shows up as a red
+      # run. Runs after the archive so the output is still uploaded.
+      - name: Check memory headroom
+        run: |
+          peak_kb=$(awk '/Maximum resident set size/ {print $NF}' time.log)
+          total_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+          if [ -z "$peak_kb" ] || [ -z "$total_kb" ]; then echo "could not read peak RSS or total RAM"; exit 1; fi
+          headroom_mb=$(( (total_kb - peak_kb) / 1024 ))
+          echo "peak RSS $(( peak_kb / 1024 )) MB of $(( total_kb / 1024 )) MB RAM, headroom $headroom_mb MB" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$headroom_mb" -lt 500 ]; then
+            echo "::error::eval peak RSS is within 500 MB of total RAM; see issue #2 for the fallbacks"
+            exit 1
+          fi
