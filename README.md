@@ -30,6 +30,12 @@ Systems evaluated by default: `x86_64-linux`, `aarch64-linux`,
 `aarch64-darwin`. (`x86_64-darwin` was dropped by nixpkgs 26.11.) Darwin
 evaluates fine on Linux — this is pure evaluation, nothing is built.
 
+The Nix version is pinned (`NIX_VERSION` in the workflow) because the output
+shape — which packages appear, how ones that refuse to evaluate are listed —
+is `nix-env` behaviour and has changed between releases. Each object carries
+the version that produced it as `x-amz-meta-nix-version`. Bumping the pin is
+a deliberate change; check the consumer against the new output first.
+
 ## Running it
 
 ```sh
