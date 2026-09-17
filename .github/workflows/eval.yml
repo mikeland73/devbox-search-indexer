@@ -41,10 +41,19 @@ jobs:
       matrix:
         system: ${{ fromJSON(inputs.systems) }}
     steps:
+      # `systems` is free-form, so check each matrix entry against the same
+      # list as the default before spending a runner on it. x86_64-darwin is
+      # rejected on purpose: nixpkgs 26.11 dropped it and nix-env errors out.
+      # (Commits before the drop would still evaluate; re-add it here if that
+      # history is ever backfilled.)
       - name: Validate inputs
         run: |
           [[ "${{ inputs.commit }}" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be a full 40-hex sha"; exit 1; }
           date -u -d "${{ inputs.committed_at }}" +%s > /dev/null || { echo "committed_at must be an ISO 8601 date"; exit 1; }
+          case "${{ matrix.system }}" in
+            x86_64-linux|aarch64-linux|aarch64-darwin) ;;
+            *) echo "unsupported system '${{ matrix.system }}': must be one of x86_64-linux, aarch64-linux, aarch64-darwin"; exit 1 ;;
+          esac
 
       # The runner image changes under us: it ships an active /swapfile, and
       # /mnt is not a separate disk. Pick the filesystem with the most free
