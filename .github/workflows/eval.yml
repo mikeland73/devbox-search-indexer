@@ -30,6 +30,15 @@ concurrency:
   group: eval-${{ inputs.commit }}
   cancel-in-progress: false
 
+env:
+  # The Nix that runs the eval. Pinned because the output shape is nix-env
+  # behaviour, not ours: e.g. newer nix-env lists packages that refuse to
+  # evaluate as stubs where older versions dropped them, which showed up
+  # downstream only as odd import counts (devbox-search #19). Bump this on
+  # purpose, and check the importer against a sample of the new output first.
+  # Each archive is stamped with the version that produced it (see below).
+  NIX_VERSION: 2.35.2
+
 jobs:
   eval:
     # 'ubuntu-latest' on a public repo is 4 vCPU / 16 GB. On a private repo it
@@ -66,6 +75,20 @@ jobs:
           free -h
 
       - uses: DeterminateSystems/nix-installer-action@v16
+        with:
+          # Always the x86_64-linux tarball: this is the runner's platform.
+          # matrix.system is only what nix-env is asked to evaluate for.
+          nix-package-url: https://releases.nixos.org/nix/nix-${{ env.NIX_VERSION }}/nix-${{ env.NIX_VERSION }}-x86_64-linux.tar.xz
+
+      # Fail fast if the installer did not honour the pin: an eval with the
+      # wrong Nix would be archived and imported before anyone noticed.
+      - name: Check Nix version
+        id: nix
+        run: |
+          nix --version | tee -a "$GITHUB_STEP_SUMMARY"
+          installed=$(nix --version | awk '{print $NF}')
+          [ "$installed" = "$NIX_VERSION" ] || { echo "installed nix $installed, expected $NIX_VERSION"; exit 1; }
+          echo "version=$installed" >> "$GITHUB_OUTPUT"
 
       - name: Fetch nixpkgs
         run: |
@@ -104,6 +127,9 @@ jobs:
           AWS_DEFAULT_REGION: auto
         run: |
           key="${{ matrix.system }}/$(date -u -d "${{ inputs.committed_at }}" +%s)-${{ inputs.commit }}.json.gz"
-          aws --endpoint-url "${{ secrets.R2_ENDPOINT }}" s3 cp eval.json.gz "s3://${{ secrets.R2_BUCKET }}/$key"
-          echo "archived $key" | tee -a "$GITHUB_STEP_SUMMARY"
+          # x-amz-meta-nix-version: the importer reads it via head-object and
+          # records it next to the import, so a Nix change is traceable.
+          aws --endpoint-url "${{ secrets.R2_ENDPOINT }}" s3 cp eval.json.gz "s3://${{ secrets.R2_BUCKET }}/$key" \
+            --metadata "nix-version=${{ steps.nix.outputs.version }}"
+          echo "archived $key (nix ${{ steps.nix.outputs.version }})" | tee -a "$GITHUB_STEP_SUMMARY"
           grep -E "Maximum resident|Elapsed" time.log >> "$GITHUB_STEP_SUMMARY"
