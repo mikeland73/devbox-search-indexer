@@ -1,3 +1,8 @@
+> **Archived.** The eval workflow now lives in
+> [mikeland73/devbox-search](https://github.com/mikeland73/devbox-search)
+> (`.github/workflows/eval.yml`, `eval.nix`), which is public and runs it on
+> the same 16 GB runners. This repository is kept read-only so the issue and
+> run links referenced from that code stay resolvable.
 # devbox-search-indexer
 
 Evaluates [nixpkgs](https://github.com/NixOS/nixpkgs) commits with `nix-env`
