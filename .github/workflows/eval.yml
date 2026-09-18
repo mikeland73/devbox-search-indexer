@@ -112,15 +112,17 @@ jobs:
           GC_INITIAL_HEAP_SIZE: 6G
         run: |
           set -o pipefail
-          # The exact nix-env invocation the importer expects. packages-config.nix
-          # makes nix-env descend into attribute sets it would otherwise skip
-          # (e.g. nodePackages.*); the rest lets it see unfree/insecure packages.
+          # The exact nix-env invocation the importer expects. eval.nix is
+          # nixpkgs with every top-level derivation made visible to nix-env's
+          # dedup (see the comment there). packages-config.nix makes nix-env
+          # descend into attribute sets it would otherwise skip (e.g.
+          # nodePackages.*); the rest lets it see unfree/insecure packages.
           config='{ allowInsecure = true; allowInsecurePredicate = (pkg: true); allowUnfree = true; allowUnfreePredicate = (pkg: true); }'
           if [ -f nixpkgs/pkgs/top-level/packages-config.nix ]; then
             config="(import ./nixpkgs/pkgs/top-level/packages-config.nix) // $config"
           fi
           /usr/bin/time -v nix-env \
-            --file ./nixpkgs/default.nix \
+            --file ./eval.nix \
             --query --available --meta --out-path --show-trace --json \
             --arg config "$config" \
             --argstr system "${{ matrix.system }}" \
