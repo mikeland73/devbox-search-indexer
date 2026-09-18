@@ -20,11 +20,16 @@ For each `(commit, system)` pair, one object in an S3-compatible bucket:
 containing the output of
 
 ```sh
-nix-env --file nixpkgs/default.nix \
+nix-env --file eval.nix \
   --query --available --meta --out-path --show-trace --json \
   --arg config '(import nixpkgs/pkgs/top-level/packages-config.nix) // { allowUnfree = true; ... }' \
   --argstr system <system>
 ```
+
+[`eval.nix`](eval.nix) is nixpkgs with one adjustment: every top-level
+derivation is listed under its own name even when a nested attribute that
+`nix-env` visits first aliases it (`buildbotPackages.python` would otherwise
+hide `python314`). The comment in the file explains the mechanism.
 
 Systems evaluated by default: `x86_64-linux`, `aarch64-linux`,
 `aarch64-darwin`. (`x86_64-darwin` was dropped by nixpkgs 26.11.) Darwin
