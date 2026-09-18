@@ -25,7 +25,7 @@ let
   inherit (pkgs) lib;
   # tryEval catches the same errors nix-env ignores (assertion failures and
   # throws, e.g. a removed alias); anything else already aborted the eval.
-  isDerivation = _: v: let r = builtins.tryEval v; in r.success && lib.isDerivation r.value;
+  isDerivation = _: v: let r = builtins.tryEval (lib.isDerivation v); in r.success && r.value;
   topLevel = lib.filterAttrs isDerivation pkgs;
 in
 pkgs // lib.mapAttrs (_: drv: drv // { _devboxSearchTopLevel = true; }) topLevel
